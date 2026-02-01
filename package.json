@@ -1,14 +1,14 @@
 {
-    "name": "com.nukadelic.animationtexturebaker",
+    "name": "com.kelo.animationtexturebaker",
     "displayName": "Animation Texture Baker",
     "description" : "Bake animation vertex data into textures",
-    "version": "1.1.1",
+    "version": "2.0.0",
     "license": "MIT",
-    "unity": "2021.3",
+    "unity": "6000.3.5f2",
     "dependencies": {
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/nukadelic/AnimationTextureBaker.git"
+        "url": "https://github.com/kelo221/AnimationTextureBaker"
     }
 }
