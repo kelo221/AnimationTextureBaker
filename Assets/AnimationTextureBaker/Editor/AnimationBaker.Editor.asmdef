@@ -1,0 +1,22 @@
+{
+    "name": "AnimationBaker.Editor",
+    "rootNamespace": "Kelo.AnimationTextureBaker.Editor",
+    "references": [
+        "GUID:c90cdf576851f744d8d283b8a0a457db",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
+

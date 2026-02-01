@@ -1,43 +1,66 @@
-# Animation Texture Baker 
+# Animation Texture Baker
 
-Bake vertex data into texture2d images via compute shader, then use a shader interpolate between vertex position to animate the mesh verticies 
+Bake skeletal animation data into 2D textures using GPU compute shaders. These textures allow you to play back animations using a specialized vertex shader, enabling thousands of animated characters on screen with minimal CPU overhead.
 
-https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/8f15c948-c2ab-439a-bff6-60b94e9046c0
+![Hero Video](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/8f15c948-c2ab-439a-bff6-60b94e9046c0)
+
+## Features
+- **GPU Baking**: Rapid animation sampling using Compute Shaders.
+- **High Performance**: Play animations via Vertex Texture Fetch (VTF) for massive crowds.
+- **Combined Baking**: Pack multiple animations into a single texture atlas.
+- **Mesh Obfuscation**: Collapse meshes into bounding boxes to protect your assets.
+- **SOLID/MVC Architecture**: Clean, modular code structure for easy extension.
 
 ## Installation 
 
-Edit the `manifest.json` file located in the `Packages` folder of your unity project and
-add the follwing line to the list of `dependencies`:
+Edit the `manifest.json` file located in the `Packages` folder of your Unity project and add the following line to the `dependencies` list:
 ```json
 "com.nukadelic.animationtexturebaker": "https://github.com/nukadelic/AnimationTextureBaker.git"
 ```
 
-## How to bake :
-* Drag and drop fbx to empty scene ( not necessary but i prefer it )
-* Add animation component to prefab
-* Add [ AnimationBaker ] component to the game object , freshly added component will have the option to automatically scan for all animations that the fbx is linked to  - or you can manually add them to the clips list inside the component
-* Attach compute shader assest "MeshInfoTextureGen"  to the InfoTexGen filed on the component
-* Use any shader that supports vertex animations , or use the demo one : "AnimationBaker_Example" in the root of this plugin folder
-* Finally press Bake button 
-( see 'Horse Bake Example' prefabs for reference ) 
+## How to Bake
+
+1. **Setup**: Drag your FBX model into the scene.
+2. **Components**:
+   - Ensure the GameObject has an `Animation` or `Animator` component.
+   - Add the `AnimationBaker` component. **Default shaders are auto-assigned** (`MeshInfoTextureGen` compute shader and `VAT_MotionVectors` play shader).
+3. **Configuration**:
+   - Press **Scan** to automatically detect clips, or add them manually to the `Clips` list.
+   - For multi-clip projects, enable **Combine Textures** in the settings.
+   - Enable **Bake Velocity** for motion blur and velocity smear effects.
+4. **Bake**: Press the **Bake Textures** button.
+5. **Output**: 
+   - Baked assets will be created in the folder specified in the **Save To Folder** setting.
+   - A material using the `VAT_MotionVectors` shader will be generated automatically.
+
+### Shader Options
+
+| Shader | Description |
+|--------|-------------|
+| **VAT_MotionVectors** (Default) | Full-featured HLSL shader with PBR lighting, motion vectors, and velocity smear support. Recommended for production. |
+| **AnimationBaker_Combined** | ShaderGraph-based shader. Compatible with combined bakes and easier to customize visually. |
 
 ## Settings & Info 
-* The baked assets will be saved inside the target folder ( "Save To Folder" field on the component ) and inside that folder it will create a subfolder with the same name as the current active game object. Same applies to any generated assets , the game object name will be the prefix for all the names , keep that in mind if you like to keep your stuff organized
-* Frame resolution will reflect on how many animations keyframes the compute shader will sample for generating the animation texture , the larger the value , the bigger is the height of the output textures ( position texture , normals textures , and tangents textures )
-* The output texture width will depend on the mesh vertex count - so low poly models will have very small texture ( in width )
-* If you want to bake only one animation remove other clips and keep only 1 clip in the component "clips" list
-* Collapse mesh checkbox will basically designed to protect your 3d models if someone would to reverse engineer the build application
-    
-## The vertex shader
 
-![image](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/1c3077cb-ac49-49f3-8177-fad51406a3c2)
+- **Frame Rate**: Defines the sampling frequency (frames per second). The final frame count is always rounded up to the nearest power of two for GPU efficiency.
+- **Combined Baking**: If enabled, all clips will be packed into a single texture atlas. A `ScriptableObject` containing frame timing data and an `AnimationFramePlayer` script will be automatically generated.
+- **Play On Demand**: The `AnimationFramePlayer` component includes a `Play On Demand` toggle. 
+    - When **Enabled**: Animations are controlled by the script timer, allowing you to restart animations instantly (e.g., via the inspector buttons or `Play(index)` API) and preventing unwanted global looping.
+    - When **Disabled**: Animations loop globally based on the shader's internal clock (pure GPU-driven).
+- **Collapse Mesh**: Collapses the mesh into a single bounding box during export. This protects your model geometry while preserving animation vertex data.
+- **Namespace**: All logic is organized under the `Kelo.AnimationTextureBaker` namespace.
 
+## Architecture & Extensibility
 
-## [Update] Added combined bake option 
-* bake all animations in a single texture
-* Custom shader for playback
-* Generated scriptable object with each animation frame time data
-* Example Mono player ( when baked with gneerated prefab option , will auto attach the demo script )
+The tool has been refactored to follow **MVC** and **SOLID** principles:
+- **Model**: `BakerSettings` handles configuration state.
+- **View**: `AnimationBakerEditor` manages the Inspector UI and orchestration.
+- **Controller**: `BakerEngine` contains the core logic for sampling and texture conversion.
 
-https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/857aa5a4-979c-4d82-a6cc-3697427c74bd
+## Screenshots
+
+![Vertex Shader Logic](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/1c3077cb-ac49-49f3-8177-fad51406a3c2)
+
+![Combined Bake Result](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/857aa5a4-979c-4d82-a6cc-3697427c74bd)
+
 
