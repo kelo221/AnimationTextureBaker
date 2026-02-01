@@ -2,7 +2,6 @@
 
 Bake skeletal animation data into 2D textures using GPU compute shaders. These textures allow you to play back animations using a specialized vertex shader, enabling thousands of animated characters on screen with minimal CPU overhead.
 
-![Hero Video](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/8f15c948-c2ab-439a-bff6-60b94e9046c0)
 
 ## Features
 - **GPU Baking**: Rapid animation sampling using Compute Shaders.
@@ -13,10 +12,9 @@ Bake skeletal animation data into 2D textures using GPU compute shaders. These t
 
 ## Installation 
 
-Edit the `manifest.json` file located in the `Packages` folder of your Unity project and add the following line to the `dependencies` list:
-```json
-"com.nukadelic.animationtexturebaker": "https://github.com/nukadelic/AnimationTextureBaker.git"
-```
+Add package from git:
+
+`https://github.com/kelo221/AnimationTextureBaker.git`
 
 ## How to Bake
 
@@ -57,10 +55,5 @@ The tool has been refactored to follow **MVC** and **SOLID** principles:
 - **View**: `AnimationBakerEditor` manages the Inspector UI and orchestration.
 - **Controller**: `BakerEngine` contains the core logic for sampling and texture conversion.
 
-## Screenshots
-
-![Vertex Shader Logic](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/1c3077cb-ac49-49f3-8177-fad51406a3c2)
-
-![Combined Bake Result](https://github.com/nukadelic/AnimationTextureBaker/assets/6582633/857aa5a4-979c-4d82-a6cc-3697427c74bd)
 
 
