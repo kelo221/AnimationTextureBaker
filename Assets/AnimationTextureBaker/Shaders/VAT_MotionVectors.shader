@@ -28,8 +28,13 @@ Shader "AnimationBaker/VAT_MotionVectors"
         _Metallic ("Metallic", Range(0, 1)) = 0.0
 
         [Header(Faked Motion Blur)]
-        _SmearStrength ("Smear Strength", Range(0, 2)) = 0
-        _SmearMinVelocity ("Smear Min Velocity", Range(0, 0.1)) = 0.001
+        _SmearStrength ("Smear Strength", Range(0, 2)) = 0.4
+        _SmearMinVelocity ("Smear Min Velocity", Range(0, 1.0)) = 0.7
+
+        // Auto-generated properties for SRP Batcher compatibility
+        [HideInInspector] _MainTex_ST("MainTex ST", Vector) = (1,1,0,0)
+        [HideInInspector] _MainTex_TexelSize("MainTex TexelSize", Vector) = (1,1,1,1)
+        [HideInInspector] _PosTex_TexelSize("PosTex TexelSize", Vector) = (1,1,1,1)
     }
     
     SubShader
@@ -45,24 +50,26 @@ Shader "AnimationBaker/VAT_MotionVectors"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
         
-        // SRP Batcher compatible CBUFFER
+        // SRP Batcher compatible CBUFFER - Must match Properties block order exactly
         CBUFFER_START(UnityPerMaterial)
-            float4 _MainTex_ST;
-            float4 _Color;
             float4 _AnimDurationAndOffset;
             float _Timer;
             float _Duration;
             float _Frames;
             float _Offset;
+            float _TimerMode;
             float _Lerp;
+            float4 _Color;
             float _Smoothness;
             float _Metallic;
             float _SmearStrength;
             float _SmearMinVelocity;
+
+            // Auto-generated properties (order matches Properties block)
+            float4 _MainTex_ST;
+            float4 _MainTex_TexelSize;
+            float4 _PosTex_TexelSize;
         CBUFFER_END
-        
-        // Texel size must be outside CBUFFER to be automatically filled by Unity
-        float4 _PosTex_TexelSize;
         
         // Main texture uses default sampler
         TEXTURE2D(_MainTex);    SAMPLER(sampler_MainTex);

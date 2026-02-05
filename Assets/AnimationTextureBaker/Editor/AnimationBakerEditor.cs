@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEngine;
 using System.Collections.Generic;
 using System.IO;
@@ -8,7 +9,6 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using Kelo.AnimationTextureBaker;
-
 
 namespace Kelo.AnimationTextureBaker.Editor
 {
@@ -19,15 +19,95 @@ namespace Kelo.AnimationTextureBaker.Editor
         private Texture2D[] bakedTexturesNorm;
         private Texture2D[] bakedTexturesTan;
         private Texture2D[] bakedTexturesVel;
+        
+        // Bone data collected per-animation: [animIndex][frame * boneCount + boneIndex]
+        private List<List<AnimationCombinedFrames.BoneFrameData>> bakedBoneData;
+        
+        // Temporary controller path for masked animation baking
+        private string tempControllerPath;
+        private AnimatorController tempController;
 
 
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
-            DrawDefaultInspector();
             
             var script = (AnimationBaker)target;
+
+            EditorGUILayout.LabelField("SOLID Configuration", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("profile"));
+            EditorGUILayout.Space(5);
+
             var settings = script.settings;
+            var settingsProp = serializedObject.FindProperty("settings");
+            
+            // Draw non-array properties normally
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("infoTexGen"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("playShader"));
+            
+            // Clips section with table headers
+            EditorGUILayout.Space(10);
+            EditorGUILayout.LabelField("Animation Clips", EditorStyles.boldLabel);
+            
+            var clipsProp = settingsProp.FindPropertyRelative("clips");
+            
+            // Draw table headers
+            EditorGUILayout.BeginHorizontal();
+            float totalWidth = EditorGUIUtility.currentViewWidth - 60f; // Account for foldout and buttons
+            float primaryWidth = totalWidth * 0.45f;
+            float secondaryWidth = totalWidth * 0.35f;
+            float maskWidth = totalWidth * 0.2f;
+            
+            GUILayout.Space(15); // Indent for foldout
+            EditorGUILayout.LabelField("Primary Clip", EditorStyles.miniLabel, GUILayout.Width(primaryWidth));
+            EditorGUILayout.LabelField("Secondary (Optional)", EditorStyles.miniLabel, GUILayout.Width(secondaryWidth));
+            EditorGUILayout.LabelField("Mask", EditorStyles.miniLabel, GUILayout.Width(maskWidth));
+            EditorGUILayout.EndHorizontal();
+            
+            EditorGUILayout.PropertyField(clipsProp, new GUIContent("Clips"), true);
+            
+            // Draw remaining properties
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("frameRate"));
+            
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Performance", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("useBurstBaking"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("texturePrecision"));
+            
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("saveToFolder"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("createPrefabs"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("createMeshAsset"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("optimizeMeshOnSave"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("collapseMesh"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("combineTextures"));
+            
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Motion Blur", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("bakeVelocity"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("exposure"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("blurSamples"));
+            
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("rotate"));
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("boundsScale"));
+            
+            EditorGUILayout.Space(5);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Bone Attachments", EditorStyles.boldLabel);
+            if (GUILayout.Button("Scan Bones", GUILayout.Width(100)))
+            {
+                script.ScanBones();
+                EditorUtility.SetDirty(script);
+            }
+            if (GUILayout.Button("Save Bones", GUILayout.Width(100)))
+            {
+                script.SaveBones();
+            }
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("animatedBones"), true);
+            
+            EditorGUILayout.PropertyField(settingsProp.FindPropertyRelative("keywords"), true);
+            
+            serializedObject.ApplyModifiedProperties();
 
             GUILayout.Space(10);
 
@@ -42,11 +122,14 @@ namespace Kelo.AnimationTextureBaker.Editor
             }
 
             string stats = "Calculated frame counts per clip: \n";
-            foreach (var clip in settings.clips)
+            foreach (var clipEntry in settings.clips)
             {
-                if (clip == null) continue;
-                int frames = BakerEngine.GetFrameCount(clip, settings.frameRate);
-                stats += $"{clip.name}: {frames}\n";
+                if (clipEntry == null || !clipEntry.IsValid) continue;
+                int frames = BakerEngine.GetFrameCount(clipEntry.primary, settings.frameRate);
+                stats += $"{clipEntry.Name}: {frames}";
+                if (clipEntry.HasMaskedLayer)
+                    stats += " [+Masked Layer]";
+                stats += "\n";
             }
 
 
@@ -123,18 +206,40 @@ namespace Kelo.AnimationTextureBaker.Editor
                 bakedTexturesNorm = new Texture2D[settings.clips.Length];
                 bakedTexturesTan = new Texture2D[settings.clips.Length];
                 bakedTexturesVel = new Texture2D[settings.clips.Length];
+                
+                // Initialize bone data collection
+                bakedBoneData = new List<List<AnimationCombinedFrames.BoneFrameData>>();
             }
 
-
+            // Store original animator controller to restore after baking
+            var animator = script.GetComponent<Animator>();
+            RuntimeAnimatorController originalController = animator != null ? animator.runtimeAnimatorController : null;
+            
             for (int i = 0; i < settings.clips.Length; i++)
             {
-                var clip = settings.clips[i];
-                if (clip == null) continue;
-                int frames = BakerEngine.GetFrameCount(clip, settings.frameRate);
+                var clipEntry = settings.clips[i];
+                if (clipEntry == null || !clipEntry.IsValid) continue;
+                
+                // Create temp controller for masked animations
+                if (clipEntry.HasMaskedLayer)
+                {
+                    CreateTempMaskedController(clipEntry, subFolderPath);
+                    if (animator != null)
+                    {
+                        animator.runtimeAnimatorController = tempController;
+                    }
+                }
 
+                var clip = clipEntry.primary;
+                int frames = BakerEngine.GetFrameCount(clip, settings.frameRate);
 
                 float dt = clip.length / frames;
                 var infoList = new List<BakerEngine.VertInfo>();
+                
+                // Per-animation bone data list
+                var animBoneData = bakeCombined && settings.animatedBones != null && settings.animatedBones.Length > 0
+                    ? new List<AnimationCombinedFrames.BoneFrameData>()
+                    : null;
 
                 var pRt = new RenderTexture(texWidth, frames, 0, RenderTextureFormat.ARGBHalf) { name = $"{script.name}.Pos.{clip.name}.{frames}F" };
                 var nRt = new RenderTexture(texWidth, frames, 0, RenderTextureFormat.ARGBHalf) { name = $"{script.name}.Nml.{clip.name}.{frames}F" };
@@ -154,6 +259,67 @@ namespace Kelo.AnimationTextureBaker.Editor
                 {
                     float t = dt * f;
                     int samples = Mathf.Max(1, settings.blurSamples);
+                    
+                    // Sample animation at this frame for bone capture
+                    SampleAnimation(script.gameObject, clipEntry, t, animator);
+                    
+                    // Capture bone transforms at this frame (use first sample only)
+                    if (animBoneData != null)
+                    {
+                        Quaternion bakeRotation = Quaternion.Euler(settings.rotate);
+                        foreach (var boneEntry in settings.animatedBones)
+                        {
+                            if (boneEntry != null && boneEntry.IsValid)
+                            {
+                                Vector3 localPos;
+                                Quaternion localRot;
+                                
+                                if (boneEntry.IsLimbPair)
+                                {
+                                    // Limb pair: compute midpoint and axis-aligned rotation
+                                    Vector3 posA = boneEntry.boneA.position;
+                                    Vector3 posB = boneEntry.boneB.position;
+                                    
+                                    // Midpoint in root-local space
+                                    Vector3 midpointWorld = (posA + posB) * 0.5f;
+                                    localPos = script.transform.InverseTransformPoint(midpointWorld);
+                                    
+                                    // Calculate rotation to align capsule axis (Y-up) with limb direction
+                                    Vector3 limbDirection = posB - posA;
+                                    if (limbDirection.sqrMagnitude > 0.0001f)
+                                    {
+                                        Quaternion lookRot = Quaternion.LookRotation(limbDirection.normalized);
+                                        Quaternion limbRotationWorld = lookRot * Quaternion.Euler(90f, 0f, 0f);
+                                        localRot = Quaternion.Inverse(script.transform.rotation) * limbRotationWorld;
+                                    }
+                                    else
+                                    {
+                                        localRot = Quaternion.identity;
+                                    }
+                                }
+                                else
+                                {
+                                    // Single bone: use root-relative position and rotation
+                                    localPos = script.transform.InverseTransformPoint(boneEntry.boneA.position);
+                                    localRot = Quaternion.Inverse(script.transform.rotation) * boneEntry.boneA.rotation;
+                                }
+                                
+                                // Apply additional bake rotation
+                                localPos = bakeRotation * localPos;
+                                localRot = bakeRotation * localRot;
+                                
+                                animBoneData.Add(new AnimationCombinedFrames.BoneFrameData
+                                {
+                                    position = localPos,
+                                    rotation = localRot
+                                });
+                            }
+                            else
+                            {
+                                animBoneData.Add(default);
+                            }
+                        }
+                    }
 
                     if (settings.useBurstBaking)
                     {
@@ -167,7 +333,7 @@ namespace Kelo.AnimationTextureBaker.Editor
                         for (int s = 0; s < samples; s++)
                         {
                             float sampleTime = t + (samples > 1 ? (s / (float)(samples - 1)) * settings.exposure : 0);
-                            clip.SampleAnimation(script.gameObject, sampleTime);
+                            SampleAnimation(script.gameObject, clipEntry, sampleTime, animator);
                             skin.BakeMesh(tempMesh);
 
                             var meshDataArray = Mesh.AcquireReadOnlyMeshData(tempMesh);
@@ -195,7 +361,7 @@ namespace Kelo.AnimationTextureBaker.Editor
 
                             if (s == 0 && settings.bakeVelocity)
                             {
-                                clip.SampleAnimation(script.gameObject, t + settings.exposure);
+                                SampleAnimation(script.gameObject, clipEntry, t + settings.exposure, animator);
                                 skin.BakeMesh(tempMeshVel);
                                 var velMeshData = Mesh.AcquireReadOnlyMeshData(tempMeshVel);
                                 using var nextPos = new NativeArray<float3>(vCount, Allocator.TempJob);
@@ -243,7 +409,7 @@ namespace Kelo.AnimationTextureBaker.Editor
                         for (int s = 0; s < samples; s++)
                         {
                             float sampleTime = t + (samples > 1 ? (s / (float)(samples - 1)) * settings.exposure : 0);
-                            clip.SampleAnimation(script.gameObject, sampleTime);
+                            SampleAnimation(script.gameObject, clipEntry, sampleTime, animator);
                             skin.BakeMesh(tempMesh);
 
                             var v = tempMesh.vertices;
@@ -259,7 +425,7 @@ namespace Kelo.AnimationTextureBaker.Editor
 
                             if (s == 0 && settings.bakeVelocity)
                             {
-                                clip.SampleAnimation(script.gameObject, t + settings.exposure);
+                                SampleAnimation(script.gameObject, clipEntry, t + settings.exposure, animator);
                                 skin.BakeMesh(tempMeshVel);
                                 var vNext = tempMeshVel.vertices;
                                 for (int vi = 0; vi < vCount; vi++)
@@ -309,16 +475,34 @@ namespace Kelo.AnimationTextureBaker.Editor
                     bakedTexturesNorm[i] = normTex;
                     bakedTexturesTan[i] = tanTex;
                     bakedTexturesVel[i] = velTex;
+                    
+                    // Store bone data for this animation
+                    if (animBoneData != null)
+                    {
+                        bakedBoneData.Add(animBoneData);
+                    }
                 }
                 else
                 {
-                    SaveBakedAssets(script, clip, frames, posTex, normTex, tanTex, velTex, subFolderPath, defaultMesh, folderPath);
+                    SaveBakedAssets(script, clipEntry.primary, frames, posTex, normTex, tanTex, velTex, subFolderPath, defaultMesh, folderPath);
                 }
                 
                 DestroyImmediate(pRt);
                 DestroyImmediate(nRt);
                 DestroyImmediate(tRt);
                 DestroyImmediate(vRt);
+                
+                // Cleanup temp controller after processing this clip
+                if (clipEntry.HasMaskedLayer)
+                {
+                    CleanupTempController();
+                }
+            }
+            
+            // Restore original animator controller
+            if (animator != null)
+            {
+                animator.runtimeAnimatorController = originalController;
             }
 
 
@@ -380,19 +564,53 @@ namespace Kelo.AnimationTextureBaker.Editor
 
             for (int i = 0; i < settings.clips.Length; i++)
             {
-                var clip = settings.clips[i];
-                if (clip == null) continue;
-                int frames = BakerEngine.GetFrameCount(clip, settings.frameRate);
-
+                var clipEntry = settings.clips[i];
+                if (clipEntry == null || !clipEntry.IsValid) continue;
+                int frames = BakerEngine.GetFrameCount(clipEntry.primary, settings.frameRate);
 
                 frameData.data[i] = new AnimationCombinedFrames.FrameTimings
                 {
-                    name = AssetDatabaseService.FixPath(clip.name),
-                    duration = clip.length,
+                    name = AssetDatabaseService.FixPath(clipEntry.Name),
+                    duration = clipEntry.Duration,
                     frames = frames,
                     offset = frameOffset
                 };
                 frameOffset += frames + 1;
+            }
+            
+            // Store bone data if we have animated bones
+            if (settings.animatedBones != null && settings.animatedBones.Length > 0 && bakedBoneData != null)
+            {
+                frameData.boneCount = settings.animatedBones.Length;
+                frameData.boneNames = new string[settings.animatedBones.Length];
+                frameData.isLimbPair = new bool[settings.animatedBones.Length];
+                for (int b = 0; b < settings.animatedBones.Length; b++)
+                {
+                    var entry = settings.animatedBones[b];
+                    if (entry != null && entry.IsValid)
+                    {
+                        frameData.boneNames[b] = entry.IsLimbPair 
+                            ? $"{entry.boneA.name} <-> {entry.boneB.name}" 
+                            : entry.boneA.name;
+                        frameData.isLimbPair[b] = entry.IsLimbPair;
+                    }
+                    else
+                    {
+                        frameData.boneNames[b] = "";
+                        frameData.isLimbPair[b] = false;
+                    }
+                }
+                
+                // Flatten all animation bone data into a single array
+                var allBoneFrames = new List<AnimationCombinedFrames.BoneFrameData>();
+                int totalFrames = 0;
+                foreach (var animData in bakedBoneData)
+                {
+                    allBoneFrames.AddRange(animData);
+                    totalFrames += animData.Count / settings.animatedBones.Length;
+                }
+                frameData.boneFrames = allBoneFrames.ToArray();
+                frameData.totalFrameCount = totalFrames;
             }
 
             AssetDatabase.CreateAsset(frameData, Path.Combine(subFolderPath, $"{safeName}.framedata.asset"));
@@ -426,6 +644,137 @@ namespace Kelo.AnimationTextureBaker.Editor
             string path = Path.Combine(folderPath, AssetDatabaseService.FixPath(name) + ".prefab");
             return PrefabUtility.SaveAsPrefabAssetAndConnect(go, path, InteractionMode.AutomatedAction);
         }
+        
+        private AnimatorController CreateTempMaskedController(ClipEntry clipEntry, string folderPath)
+        {
+            // Create controller and persist to disk (Unity requires serialized state machines for proper layer blending)
+            tempControllerPath = Path.Combine(folderPath, "_TempMaskedController.controller");
+            
+            // Delete existing temp controller if present
+            if (File.Exists(tempControllerPath))
+            {
+                AssetDatabase.DeleteAsset(tempControllerPath);
+            }
+            
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(tempControllerPath);
+            controller.name = "_TempMaskedController";
+            
+            // Remove default layer created by CreateAnimatorControllerAtPath
+            while (controller.layers.Length > 0)
+            {
+                controller.RemoveLayer(0);
+            }
+            
+            // Base Layer - primary animation
+            var baseStateMachine = new AnimatorStateMachine
+            {
+                name = "BaseStateMachine",
+                hideFlags = HideFlags.HideInHierarchy
+            };
+            AssetDatabase.AddObjectToAsset(baseStateMachine, controller);
+            
+            var baseLayer = new AnimatorControllerLayer
+            {
+                name = "Base",
+                defaultWeight = 1f,
+                stateMachine = baseStateMachine
+            };
+            controller.AddLayer(baseLayer);
+            
+            var baseState = baseStateMachine.AddState(clipEntry.primary.name);
+            baseState.motion = clipEntry.primary;
+            baseState.speed = 1f;
+            baseStateMachine.defaultState = baseState;
+
+            // Masked Layer - secondary animation with avatar mask override
+            var maskedStateMachine = new AnimatorStateMachine
+            {
+                name = "MaskedStateMachine",
+                hideFlags = HideFlags.HideInHierarchy
+            };
+            AssetDatabase.AddObjectToAsset(maskedStateMachine, controller);
+            
+            var maskedLayer = new AnimatorControllerLayer
+            {
+                name = "Masked",
+                defaultWeight = 1f,
+                avatarMask = clipEntry.mask,
+                blendingMode = AnimatorLayerBlendingMode.Override,
+                stateMachine = maskedStateMachine
+            };
+            controller.AddLayer(maskedLayer);
+            
+            var maskedState = maskedStateMachine.AddState(clipEntry.secondary.name + "_Masked");
+            maskedState.motion = clipEntry.secondary;
+            maskedState.speed = 1f;
+            maskedStateMachine.defaultState = maskedState;
+
+            // Save the controller asset - critical for layer blending to work
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssets();
+            
+            tempController = controller;
+            return controller;
+        }
+        
+        private void CleanupTempController()
+        {
+            if (!string.IsNullOrEmpty(tempControllerPath) && File.Exists(tempControllerPath))
+            {
+                AssetDatabase.DeleteAsset(tempControllerPath);
+                tempControllerPath = null;
+                tempController = null;
+            }
+        }
+
+        private void SampleAnimation(GameObject target, ClipEntry clipEntry, float time, Animator animator)
+        {
+            if (clipEntry.HasMaskedLayer)
+            {
+                // Use Animator layer blending with persisted controller (like Turbo Animator)
+                if (animator == null)
+                {
+                    Debug.LogError("Animator component required for masked animation blending!");
+                    clipEntry.primary.SampleAnimation(target, time);
+                    return;
+                }
+                
+                // Ensure temp controller is assigned
+                if (tempController != null && animator.runtimeAnimatorController != tempController)
+                {
+                    animator.runtimeAnimatorController = tempController;
+                }
+                
+                // Calculate normalized times for both clips
+                float primaryNormalized = time / clipEntry.primary.length;
+                float secondaryNormalized = (time / clipEntry.primary.length) * (clipEntry.primary.length / clipEntry.secondary.length);
+                secondaryNormalized = Mathf.Clamp01(secondaryNormalized);
+                
+                // Play both animations on their respective layers
+                animator.Play(clipEntry.primary.name, 0, primaryNormalized);
+                animator.Play(clipEntry.secondary.name + "_Masked", 1, secondaryNormalized);
+                
+                // Explicitly set layer weight (critical for blending)
+                animator.SetLayerWeight(1, 1f);
+                
+                // Force evaluation
+                animator.Update(0f);
+            }
+            else if (animator != null && animator.runtimeAnimatorController != null)
+            {
+                // Single animation without mask - use Animator for consistency
+                float normalizedTime = time / clipEntry.primary.length;
+                animator.Play(clipEntry.primary.name, 0, normalizedTime);
+                animator.Update(0f);
+            }
+            else
+            {
+                // Fallback for objects without animator
+                clipEntry.primary.SampleAnimation(target, time);
+            }
+        }
+        
+        // Manual blending methods removed - now using Animator layer blending with persisted controllers
     }
 }
 #endif

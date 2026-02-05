@@ -3,6 +3,7 @@
     "rootNamespace": "Kelo.AnimationTextureBaker.Editor",
     "references": [
         "GUID:c90cdf576851f744d8d283b8a0a457db",
+        "GUID:2ec1ee4396cc41249a2d35895ed8ec45",
         "Unity.Burst",
         "Unity.Collections",
         "Unity.Mathematics"

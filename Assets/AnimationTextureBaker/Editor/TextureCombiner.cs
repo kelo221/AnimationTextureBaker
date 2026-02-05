@@ -10,12 +10,21 @@ namespace Kelo.AnimationTextureBaker.Editor
         {
             if (textures == null || textures.Length == 0) return null;
 
-            int w = textures[0].width;
-            TextureFormat f = textures[0].format;
+            Texture2D firstValid = null;
             int totalHeight = 0;
 
             for (int i = 0; i < textures.Length; i++)
-                totalHeight += textures[i].height + 1; // Extra pixel space for duplicate first row
+            {
+                var t = textures[i];
+                if (t == null) continue;
+                if (firstValid == null) firstValid = t;
+                totalHeight += t.height + 1; // Extra pixel space for duplicate first row
+            }
+
+            if (firstValid == null || totalHeight <= 0) return null;
+
+            int w = firstValid.width;
+            TextureFormat f = firstValid.format;
 
             var output = new Texture2D(w, totalHeight, f, false);
             int currentY = 0;
@@ -23,6 +32,7 @@ namespace Kelo.AnimationTextureBaker.Editor
             for (int i = 0; i < textures.Length; i++)
             {
                 var t = textures[i];
+                if (t == null) continue;
                 int h = t.height;
                 Graphics.CopyTexture(t, 0, 0, 0, 0, w, h, output, 0, 0, 0, currentY);
                 currentY += h;

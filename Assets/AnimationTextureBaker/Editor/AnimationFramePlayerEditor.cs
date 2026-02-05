@@ -3,9 +3,6 @@ using UnityEditor;
 using UnityEngine;
 using Kelo.AnimationTextureBaker;
 
-using Kelo.AnimationTextureBaker;
-
-
 namespace Kelo.AnimationTextureBaker.Editor
 {
     [CustomEditor(typeof(AnimationFramePlayer))]
@@ -13,9 +10,19 @@ namespace Kelo.AnimationTextureBaker.Editor
     {
         public override void OnInspectorGUI()
         {
+            var script = (AnimationFramePlayer)target;
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Bone Attachments", EditorStyles.boldLabel);
+            if (GUILayout.Button("Scan Bones", GUILayout.Width(100)))
+            {
+                script.ScanBones();
+                EditorUtility.SetDirty(script);
+            }
+            EditorGUILayout.EndHorizontal();
+
             base.OnInspectorGUI();
 
-            var script = (AnimationFramePlayer)target;
             if (script.frameData == null) return;
 
             GUILayout.Space(10);
